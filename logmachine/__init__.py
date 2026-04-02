@@ -1,1 +1,1 @@
-from .main import LogMachine
+from .main import LogMachine, default_logger

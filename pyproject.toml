@@ -1,6 +1,6 @@
 [project]
 name = "logmachine"
-version = "2.1.0"
+version = "2.3.0"
 description = "Collaborative, beautiful logging system for distributed developers"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -17,9 +17,9 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://logmachine.bufferpunk.com"
-Documentation = "https://github.com/Scion-Kin/logmachine"
-Source = "https://github.com/Scion-Kin/logmachine"
-Tracker = "https://github.com/Scion-Kin/logmachine/issues"
+Documentation = "https://github.com/logmachine/python"
+Source = "https://github.com/logmachine/python"
+Tracker = "https://github.com/logmachine/python/issues"
 
 [build-system]
 requires = ["setuptools>=61.0", "websocket-client", "python-socketio", "requests"]

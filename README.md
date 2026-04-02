@@ -1,4 +1,4 @@
-# 🧠 logmachine 2.1.0
+# 🧠 LogMachine
 
 > Collaborative, beautiful logging system for distributed developers
 
@@ -47,6 +47,17 @@ logger.warning("This is a warning message.")
 
 ### With Central Logging (HTTP or Socket.IO)
 
+You can use the default logger with central logging pointing to "https://logmachine.bufferpunk.com"  
+
+```python
+from logmachine import default_logger
+logger = default_logger()
+logger.info("This log is sent to the LogMachine default central server!")
+```
+
+This is the default central logging server for logmachine, and you can create your own room there for free.
+To use your own central logging server, provide the configuration as shown below:
+
 ```python
 logger_config = {
     "url": "https://logmachine.bufferpunk.com",  # Base server URL
@@ -87,8 +98,9 @@ Sample (terminal):
 ### Add Your Own Log Level
 
 ```python
-log.new_level("CRITICAL_HACK", 60)
-log.critical_hack("Zero day found!")
+logger.new_level("CRITICAL_HACK", 60)
+logger.new_level("CRITICAL_HACK", 60, color="\033[38;5;13m")  # Optional color... does your girlfriend love pink? Maybe you should be in a relationship with your terminal.
+logger.critical_hack("Zero day found!")
 ```
 
 ---
@@ -96,6 +108,9 @@ log.critical_hack("Zero day found!")
 ## 📤 Parse & Export
 
 ### Convert Logs to JSON
+
+This is useful for sending logs to web dashboards or log collectors that expect JSON.
+It reads the your log files, parses the log entries, and outputs them as JSON objects.
 
 ```python
 json_logs = log.jsonifier()
