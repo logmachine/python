@@ -166,7 +166,7 @@ MIT License
 
 Mugabo Gusenga
 [logmachine.bufferpunk.com](https://logmachine.bufferpunk.com)
-[GitHub](https://github.com/Scion-Kin/logmachine)
+[GitHub](https://github.com/logmachine/python)
 
 ---
 
