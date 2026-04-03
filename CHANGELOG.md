@@ -2,6 +2,7 @@
 
 ## 2026-04-03
 - FEAT: Make socketio dependency optional and improve transporter logic
+- FEAT: Make socketio dependency optional and improve transporter logic
 
 All notable changes to this project will be documented in this file.
 
