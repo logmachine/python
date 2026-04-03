@@ -1,12 +1,25 @@
 import atexit
-import os
-import re
 import json
 import logging
-import requests
-import socketio
+import os
 import queue
+import re
+import requests
 from logging.handlers import QueueHandler, QueueListener
+
+
+"""
+We've removed the socketio and websockets dependency from the core of LogMachine to make it more lightweight and avoid forcing users to install it.
+The Logger will use socketio if available in the environment, otherwise it will fall back to HTTP requests for log transport.
+Socketio is generally more efficient for real-time log transport,
+while HTTP can be used as a fallback for environments where socketio is not available or not desired.
+Socketio takes precedence over HTTP if both are available, as it provides a more robust and efficient transport mechanism for real-time logging.
+"""
+
+try:
+    import socketio
+except ImportError:
+    pass
 
 
 def get_login():
@@ -54,7 +67,7 @@ class HTTPTransporter(logging.StreamHandler):
                 response = requests.post(
                     f"{self.central.get('url', '') + self.central.get('endpoint', '/api/logs')}?room={self.central.get('room', '')}",
                     json=log_data,
-                    headers={"Content-Type": "application/json", **self.central.get('headers', {})}
+                    headers={**self.central.get('headers', {}), 'Content-Type': 'application/json'}
                 )
                 if response.status_code != 200:
                     raise Exception(f"Failed to send log to central: {response.text}")
@@ -71,21 +84,26 @@ class SocketIOTransporter(logging.StreamHandler):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.parse_log = kwargs.get('log_parser')
-        self.central = kwargs.get('central', None)
+        self.central = kwargs.get('central', {})
         self.sio = socketio.Client()
-        if self.central:
-            self.sio.connect(self.central.get('url', ''), headers=self.central.get('headers', {}), socketio_path=self.central.get('socketio_path', '/api/socket.io/'))
+        if not self.central:
+            raise ValueError("""Central configuration must be provided for SocketIOTransporter.
+                Example: {'url': 'http://central-server.com/api/socket.io/', 'room': 'my_organization_name'}
+            """)
+        try:
+            self.sio.connect(self.central.get('url', ''), headers=self.central.get('headers', {}), socketio_path=self.central.get('endpoint', '/api/socket.io/'))
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to central server via SocketIO: {e}")
 
     def emit(self, record):
         try:
             msg = self.format(record)
             super().emit(record)
-            if self.central:
+            if self.central and self.sio.connected:
                 if not self.central.get('room'):
-                    raise ValueError("""
-                                     Central configuration must include 'room' for log transport.
-                                        Example: {'url': 'http://central-server.com/api/logs', 'room': 'my_organization_name'}
-                                     """)
+                    raise ValueError("""Central configuration must include 'room' for log transport.
+                        Example: {'url': 'http://central-server.com/api/socket.io/', 'room': 'my_organization_name'}
+                    """)
 
                 log_data = self.parse_log(msg)
                 if log_data:
@@ -172,7 +190,8 @@ class LogMachine(logging.Logger):
             if not os.path.exists(os.path.expanduser("~/.cl_username")):
                 try:
                     login = get_login()
-                    response = requests.get(f"{self.central.get('url', '')}/api/get_username?base={login}")
+                    username_endpoint = self.central.get('get_username_endpoint', '/api/get_username')
+                    response = requests.get(f"{self.central.get('url', '')}/{username_endpoint}?base={login}", headers=self.central.get('headers', {}))
                     if response.status_code == 200:
                         os.environ['CL_USERNAME'] = response.json().get('username') or 'unknown' # Unknown will probably never be reached, but it's a fallback.
                         if os.environ.get('CL_USERNAME') != 'unknown':
@@ -185,7 +204,7 @@ class LogMachine(logging.Logger):
             else:
                 get_login()
 
-            if not kwargs.get('attached', False) and not self.central.get('socketio', False):
+            if 'socketio' in globals():
                 ch = HTTPTransporter(log_parser=self.parse_log, central=self.central)
             else:
                 ch = SocketIOTransporter(log_parser=self.parse_log, central=self.central)
