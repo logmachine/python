@@ -53,6 +53,14 @@ class HTTPTransporter(logging.StreamHandler):
         super().__init__()
         self.parse_log = kwargs.get('log_parser')
         self.central = kwargs.get('central', None)
+        self.session = requests.Session()  # Use a session for connection pooling
+
+    def close(self):
+        try:
+            self.session.close()
+        except Exception:
+            pass
+        return super().close()
 
     def emit(self, record):
         try:
@@ -64,9 +72,9 @@ class HTTPTransporter(logging.StreamHandler):
 
             log_data = self.parse_log(msg)
             if log_data:
-                response = requests.post(
+                response = self.session.post(
                     f"{self.central.get('url', '') + self.central.get('endpoint', '/api/logs')}?room={self.central.get('room', '')}",
-                    json=log_data,
+                    json=log_data, timeout=(3, 3),
                     headers={**self.central.get('headers', {}), 'Content-Type': 'application/json'}
                 )
                 if response.status_code != 200:
@@ -94,6 +102,14 @@ class SocketIOTransporter(logging.StreamHandler):
             self.sio.connect(self.central.get('url', ''), headers=self.central.get('headers', {}), socketio_path=self.central.get('endpoint', '/api/socket.io/'))
         except Exception as e:
             raise ConnectionError(f"Failed to connect to central server via SocketIO: {e}")
+
+    def close(self):
+        try:
+            if self.sio.connected:
+                self.sio.disconnect()
+        except Exception:
+            pass
+        return super().close()
 
     def emit(self, record):
         try:
@@ -204,7 +220,7 @@ class LogMachine(logging.Logger):
             else:
                 get_login()
 
-            if 'socketio' in globals():
+            if 'socketio' not in globals():
                 ch = HTTPTransporter(log_parser=self.parse_log, central=self.central)
             else:
                 ch = SocketIOTransporter(log_parser=self.parse_log, central=self.central)

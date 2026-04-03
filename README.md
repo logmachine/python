@@ -62,10 +62,8 @@ To use your own central logging server, provide the configuration as shown below
 logger_config = {
     "url": "https://logmachine.bufferpunk.com",  # Base server URL
     "room": "team_alpha",                # Your organization or room
-    "endpoint": "/api/logs",             # Optional, defaults to /api/logs
-    "headers": {"Authorization": "Bearer token"},
-    "socketio": True,                    # Set False to use HTTP
-    "socketio_path": "/api/socket.io/"  # Optional
+    "endpoint": "/api/logs",             # Optional, defaults to /api/logs. Use /api/socket.io/ for Socket.IO transport.
+    "headers": {"Authorization": "Bearer token"}, # The central server should know your username based on the token you provide here. This is optional and depends on your central server's authentication mechanism.
 }
 logger = LogMachine("with_central", debug_level=0, central=logger_config, socketio=True)
 logger.success("Central logging is working!")
@@ -122,9 +120,12 @@ for entry in json_logs:
 
 ## 📡 Central Server Compatibility
 
-To use Socket.IO, your central server must support these events:
+To use Socket.IO, your central server must support this event:
 
 * `log`: Receives log payloads: `{ room: string, data: object }`
+
+For central username resolution, your server should expose an endpoint like:
+
 * `GET /api/get_username?base=localname`: Returns `{ "username": "..." }`
 
 ---
@@ -149,10 +150,8 @@ To use Socket.IO, your central server must support these events:
 | --------------- | ------ | -------------------------------------------------- |
 | `url`           | `str`  | Central server base URL                            |
 | `room`          | `str`  | Logical group or org name                          |
-| `endpoint`      | `str`  | HTTP endpoint for POST logs (default: `/api/logs`) |
+| `endpoint`      | `str`  | HTTP endpoint for POST logs (default: `/api/logs` or `/api/socket.io/` for Socket.IO) |
 | `headers`       | `dict` | Extra headers to send (e.g. auth token)            |
-| `socketio`      | `bool` | Whether to use Socket.IO instead of HTTP           |
-| `socketio_path` | `str`  | Path to socket.io on the server                    |
 
 ---
 
