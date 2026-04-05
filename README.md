@@ -62,7 +62,7 @@ To use your own central logging server, provide the configuration as shown below
 logger_config = {
     "url": "https://logmachine.bufferpunk.com",  # Base server URL
     "room": "team_alpha",                # Your organization or room
-    "endpoint": "/api/logs",             # Optional, defaults to /api/logs. Use /api/socket.io/ for Socket.IO transport.
+    "endpoint": "/api/logs",             # Optional, defaults to /api/logs for HTTP or /api/socket.io/ for Socket.IO transport.
     "headers": {"Authorization": "Bearer token"}, # The central server should know your username based on the token you provide here. This is optional and depends on your central server's authentication mechanism.
 }
 logger = LogMachine("with_central", debug_level=0, central=logger_config, socketio=True)

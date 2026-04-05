@@ -5,6 +5,7 @@ import os
 import queue
 import re
 import requests
+import sys
 from logging.handlers import QueueHandler, QueueListener
 
 
@@ -51,7 +52,6 @@ class HTTPTransporter(logging.StreamHandler):
         :param kwargs: Keyword arguments including 'log_parser' and 'central' configuration.
         """
         super().__init__()
-        self.parse_log = kwargs.get('log_parser')
         self.central = kwargs.get('central', None)
         self.session = requests.Session()  # Use a session for connection pooling
 
@@ -64,17 +64,22 @@ class HTTPTransporter(logging.StreamHandler):
 
     def emit(self, record):
         try:
-            msg = self.format(record)
             super().emit(record)
             if not self.central or not self.central.get('room'):
                 raise ValueError("""Central configuration must include 'room' for log transport.
                     Example: {'url': 'http://central-server/api/logs', 'room': 'my_organization_name'}""")
 
-            log_data = self.parse_log(msg)
-            if log_data:
+            if record:
                 response = self.session.post(
                     f"{self.central.get('url', '') + self.central.get('endpoint', '/api/logs')}?room={self.central.get('room', '')}",
-                    json=log_data, timeout=(3, 3),
+                    json={
+                        'user': os.environ.get('CL_USERNAME') or get_login(),
+                        'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'stdin',
+                        'level': record.levelname,
+                        'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
+                        'message': record.getMessage()
+                    },
+                    timeout=(3, 3),
                     headers={**self.central.get('headers', {}), 'Content-Type': 'application/json'}
                 )
                 if response.status_code != 200:
@@ -91,7 +96,6 @@ class SocketIOTransporter(logging.StreamHandler):
     """
     def __init__(self, *args, **kwargs):
         super().__init__()
-        self.parse_log = kwargs.get('log_parser')
         self.central = kwargs.get('central', {})
         self.sio = socketio.Client()
         if not self.central:
@@ -99,7 +103,11 @@ class SocketIOTransporter(logging.StreamHandler):
                 Example: {'url': 'http://central-server.com/api/socket.io/', 'room': 'my_organization_name'}
             """)
         try:
-            self.sio.connect(self.central.get('url', ''), headers=self.central.get('headers', {}), socketio_path=self.central.get('endpoint', '/api/socket.io/'))
+            self.sio.connect(self.central.get('url', ''),
+                headers=self.central.get('headers', {}),
+                socketio_path=self.central.get('endpoint', '/api/socket.io/'),
+                wait_timeout=3
+            )
         except Exception as e:
             raise ConnectionError(f"Failed to connect to central server via SocketIO: {e}")
 
@@ -113,17 +121,20 @@ class SocketIOTransporter(logging.StreamHandler):
 
     def emit(self, record):
         try:
-            msg = self.format(record)
             super().emit(record)
-            if self.central and self.sio.connected:
+            if self.central and self.sio.connected and record:
                 if not self.central.get('room'):
                     raise ValueError("""Central configuration must include 'room' for log transport.
                         Example: {'url': 'http://central-server.com/api/socket.io/', 'room': 'my_organization_name'}
                     """)
 
-                log_data = self.parse_log(msg)
-                if log_data:
-                    self.sio.emit('log', {'room': self.central.get('room'), 'data': log_data})
+                self.sio.emit('log', {'room': self.central.get('room'), 'data': {
+                    'user': os.environ.get('CL_USERNAME') or get_login(),
+                    'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'stdin',
+                    'level': record.levelname,
+                    'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
+                    'message': record.getMessage()
+                }})
 
         except Exception:
             self.handleError(record)
@@ -180,9 +191,9 @@ class LogMachine(logging.Logger):
         self.log_file = kwargs.get('log_file', 'logs.log')
         self.error_file = kwargs.get('error_file', 'errors.log')
         self.debug_level = int(kwargs.get('debug_level', 0))
-        self.verbose = kwargs.get('verbose', False)
+        self.verbose = sys.argv[1:] and '--verbose' in sys.argv[1:]
         self.central = kwargs.get('central', None)
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=10000)
 
         # Remove existing handlers
         for h in self.handlers[:]:
@@ -207,7 +218,7 @@ class LogMachine(logging.Logger):
                 try:
                     login = get_login()
                     username_endpoint = self.central.get('get_username_endpoint', '/api/get_username')
-                    response = requests.get(f"{self.central.get('url', '')}/{username_endpoint}?base={login}", headers=self.central.get('headers', {}))
+                    response = requests.get(f"{self.central.get('url', '')}/{username_endpoint}?base={login}", headers=self.central.get('headers', {}), timeout=(3, 3))
                     if response.status_code == 200:
                         os.environ['CL_USERNAME'] = response.json().get('username') or 'unknown' # Unknown will probably never be reached, but it's a fallback.
                         if os.environ.get('CL_USERNAME') != 'unknown':
@@ -221,9 +232,9 @@ class LogMachine(logging.Logger):
                 get_login()
 
             if 'socketio' not in globals():
-                ch = HTTPTransporter(log_parser=self.parse_log, central=self.central)
+                ch = HTTPTransporter(central=self.central)
             else:
-                ch = SocketIOTransporter(log_parser=self.parse_log, central=self.central)
+                ch = SocketIOTransporter(central=self.central)
         else:
             ch = logging.StreamHandler()
 
@@ -261,15 +272,22 @@ class LogMachine(logging.Logger):
         self.listener = QueueListener(self.queue, fh, eh, ch)
         self.listener.start()
         atexit.register(self.listener.stop)
-        self.info("LogMachine initialized with debug level {} with{}".format(
+        sys.stdout.write("LogMachine initialized with debug level {} with{}\n".format(
                 self.debug_level,
-                self.central and
-                f" central logging to {self.central.get('url', '')}" or
-                "out central logging"
+                self.central and f" central logging to {self.central.get('url', '')}" or "out central logging"
             )
         )
 
     def success(self, msg, *args, **kwargs) -> None:
+        """
+        Log a message with level SUCCESS (25).
+        This level is built in because it's commonly used for indicating successful operations that are more significant than INFO but not as critical as WARNING.
+        And we like to celebrate successes! 🟢
+
+        :param msg: The message to log.
+        :param args: Additional arguments for the log message.
+        :param kwargs: Additional keyword arguments for the log message.
+        """
         if self.isEnabledFor(25):
             self._log(25, msg, args, stacklevel=2, **kwargs)
 
