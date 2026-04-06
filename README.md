@@ -15,7 +15,7 @@
 - 🧩 **Pluggable backends**: send logs to a central server or local files
 - 📦 **Simple JSON output** for web dashboards or collectors
 - 🧽 Strips ANSI escape codes from logs for clean parsing
-- 🧠 Automatically resolves usernames and saves them in `~/.cl_username`
+- 🧠 Automatically resolves usernames and session tokens in `~/.LM_CREDS`
 
 ---
 
@@ -68,6 +68,29 @@ logger_config = {
 logger = LogMachine("with_central", debug_level=0, central=logger_config, socketio=True)
 logger.success("Central logging is working!")
 ```
+
+### Browser Login for Central Logging
+
+If your central server supports LogMachine auth endpoints, you can open a browser login flow
+directly from the SDK. The provider selection (Google/GitHub) happens in the browser UI.
+
+```python
+from logmachine import LogMachine
+
+logger = LogMachine("with_central", central={
+    "url": "https://logmachine.bufferpunk.com",
+    "room": "team_alpha",
+}).login()
+
+logger.info("Now logging as an authenticated user")
+```
+
+What `.login()` does:
+
+* Opens your browser to the central auth page
+* Waits for a localhost callback to complete authentication
+* Stores `lm_auth_token` and `lm_username` in `~/.LM_CREDS` for reuse
+* Automatically attaches `Authorization: Bearer ...` to central log transport
 
 ---
 
@@ -128,12 +151,20 @@ For central username resolution, your server should expose an endpoint like:
 
 * `GET /api/get_username?base=localname`: Returns `{ "username": "..." }`
 
+For browser auth with `.login()`, your server should also expose:
+
+* `GET /api/auth/providers`
+* `GET /api/auth/start/{provider}`
+* `GET /api/auth/callback/{provider}`
+* `GET /api/auth/session`
+
 ---
 
 ## 🤖 Environment Variables
 
-* `CL_USERNAME`: Manually override detected username
-* Automatically stored in `~/.cl_username` for persistent identity
+* `lm_username`: Username override used by formatter and transport payload
+* `lm_auth_token`: Bearer token automatically sent to central server when present
+* Credentials are persisted in `~/.LM_CREDS`
 
 ---
 

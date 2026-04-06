@@ -6,21 +6,147 @@ import queue
 import re
 import requests
 import sys
+import threading
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import QueueHandler, QueueListener
+from urllib.parse import parse_qs, quote, urlparse
 
-
-"""
-We've removed the socketio and websockets dependency from the core of LogMachine to make it more lightweight and avoid forcing users to install it.
-The Logger will use socketio if available in the environment, otherwise it will fall back to HTTP requests for log transport.
-Socketio is generally more efficient for real-time log transport,
-while HTTP can be used as a fallback for environments where socketio is not available or not desired.
-Socketio takes precedence over HTTP if both are available, as it provides a more robust and efficient transport mechanism for real-time logging.
-"""
 
 try:
+    """
+    We've removed the socketio and websockets dependency from the core of LogMachine to make it more lightweight and avoid forcing users to install it.
+    The Logger will use socketio if available in the environment, otherwise it will fall back to HTTP requests for log transport.
+    Socketio is generally more efficient for real-time log transport,
+    while HTTP can be used as a fallback for environments where socketio is not available or not desired.
+    Socketio takes precedence over HTTP if both are available, as it provides a more robust and efficient transport mechanism for real-time logging.
+    """
+
     import socketio
 except ImportError:
     pass
+
+
+LM_CREDS_PATH = os.path.expanduser("~/.LM_CREDS")
+
+
+def _auth_headers(headers=None):
+    auth_token = os.getenv("lm_auth_token")
+    merged = dict(headers or {})
+    if auth_token and "Authorization" not in merged and "authorization" not in merged:
+        merged["Authorization"] = f"Bearer {auth_token}"
+    return merged
+
+
+def _persist_lm_creds(username=None, auth_token=None):
+    current = {}
+    if os.path.exists(LM_CREDS_PATH):
+        with open(LM_CREDS_PATH, "r") as f:
+            for line in f.read().splitlines():
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    current[key.strip()] = value.strip()
+
+    if username:
+        current["lm_username"] = username
+        os.environ["lm_username"] = username
+    if auth_token:
+        current["lm_auth_token"] = auth_token
+        os.environ["lm_auth_token"] = auth_token
+
+    with open(LM_CREDS_PATH, "w") as f:
+        for key, value in current.items():
+            f.write(f"{key}={value}\n")
+
+
+class _AuthCallbackHandler(BaseHTTPRequestHandler):
+    result = {"token": None, "username": None, "provider": None, "error": None}
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        token = query.get("token", [None])[0]
+        username = query.get("username", [None])[0] or query.get("display_name", [None])[0]
+        provider = query.get("provider", [None])[0]
+        error = query.get("error", [None])[0]
+
+        if parsed.path != "/callback":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        if error:
+            _AuthCallbackHandler.result = {"token": None, "username": username, "provider": provider, "error": error}
+            self.send_response(400)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<h3>LogMachine login failed. You can close this tab.</h3>")
+            return
+
+        if token:
+            _AuthCallbackHandler.result = {"token": token, "username": username, "provider": provider, "error": None}
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<h3>LogMachine login complete. You can close this tab and return to your terminal.</h3>")
+            return
+
+        self.send_response(400)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"<h3>LogMachine login did not return a token. You can close this tab.</h3>")
+
+    def log_message(self, format, *args):
+        return
+
+
+def _sdk_login_via_browser(central_url, timeout_seconds=180):
+    _AuthCallbackHandler.result = {"token": None, "username": None, "provider": None, "error": None}
+    server = HTTPServer(("127.0.0.1", 0), _AuthCallbackHandler)
+    port = server.server_address[1]
+    callback_url = f"http://127.0.0.1:{port}/callback"
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    web_base = central_url.rstrip("/")
+    if web_base.endswith("/api"):
+        web_base = web_base[:-4]
+
+    login_url = f"{web_base}/auth/login?callback_url={quote(callback_url, safe='')}"
+    opened = webbrowser.open(login_url)
+    if not opened:
+        print(f"Open this URL to log in: {login_url}")
+
+    started_at = time.time()
+    try:
+        while time.time() - started_at < timeout_seconds:
+            result = _AuthCallbackHandler.result
+            if result.get("error"):
+                raise RuntimeError(f"Login failed: {result['error']}")
+            if result.get("token"):
+                return result
+            time.sleep(0.2)
+        raise TimeoutError("Timed out waiting for browser login to complete")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def creds_file_to_dict():
+    try:
+        creds_path = LM_CREDS_PATH
+        if os.path.exists(creds_path):
+            with open(creds_path, 'r') as f:
+                creds_content = f.read().strip()
+                for line in creds_content.splitlines():
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+        os.environ['LM_LOADED'] = 'true'
+    except Exception:
+        os.environ['LM_LOADED'] = 'false'
 
 
 def get_login():
@@ -29,12 +155,10 @@ def get_login():
     :return: The login name of the current user.
     """
     try:
-        if not os.path.exists(os.path.expanduser("~/.cl_username")):
-            return os.getlogin()
-        else:
-            with open(os.path.expanduser("~/.cl_username"), 'r') as f:
-                os.environ['CL_USERNAME'] = f.read().strip()
-            return os.environ['CL_USERNAME']
+        if os.getenv('LM_LOADED') != 'true':
+            creds_file_to_dict()
+
+        return os.getenv('lm_username') or os.getlogin()
     except Exception:
         return os.environ.get('USER', 'unknown')
 
@@ -73,14 +197,14 @@ class HTTPTransporter(logging.StreamHandler):
                 response = self.session.post(
                     f"{self.central.get('url', '') + self.central.get('endpoint', '/api/logs')}?room={self.central.get('room', '')}",
                     json={
-                        'user': os.environ.get('CL_USERNAME') or get_login(),
+                        'user': get_login(),
                         'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'stdin',
                         'level': record.levelname,
                         'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
                         'message': record.getMessage()
                     },
                     timeout=(3, 3),
-                    headers={**self.central.get('headers', {}), 'Content-Type': 'application/json'}
+                    headers={**_auth_headers(self.central.get('headers', {})), 'Content-Type': 'application/json'}
                 )
                 if response.status_code != 200:
                     raise Exception(f"Failed to send log to central: {response.text}")
@@ -104,7 +228,7 @@ class SocketIOTransporter(logging.StreamHandler):
             """)
         try:
             self.sio.connect(self.central.get('url', ''),
-                headers=self.central.get('headers', {}),
+                headers=_auth_headers(self.central.get('headers', {})),
                 socketio_path=self.central.get('endpoint', '/api/socket.io/'),
                 wait_timeout=3
             )
@@ -129,12 +253,12 @@ class SocketIOTransporter(logging.StreamHandler):
                     """)
 
                 self.sio.emit('log', {'room': self.central.get('room'), 'data': {
-                    'user': os.environ.get('CL_USERNAME') or get_login(),
+                    'user': get_login(),
                     'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'stdin',
                     'level': record.levelname,
                     'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
                     'message': record.getMessage()
-                }})
+                }, 'auth_token': os.getenv('lm_auth_token')})
 
         except Exception:
             self.handleError(record)
@@ -170,7 +294,7 @@ class CustomFormatter(logging.Formatter):
         self.level_formats[levelname] = f"{self.bold}[ {levelname} ]{self.reset}"
 
     def format(self, record) -> str:
-        username = os.environ.get('CL_USERNAME') or get_login()
+        username = get_login()
 
         levelname = record.levelname
         color = self.colors.get(levelname, '')
@@ -195,6 +319,9 @@ class LogMachine(logging.Logger):
         self.central = kwargs.get('central', None)
         self.queue = queue.Queue(maxsize=10000)
 
+        if os.getenv('LM_LOADED') != 'true':
+            creds_file_to_dict()
+
         # Remove existing handlers
         for h in self.handlers[:]:
             self.removeHandler(h)
@@ -211,25 +338,25 @@ class LogMachine(logging.Logger):
                The central uses usernames to group logs.
                OS usernames are used to identify the user, meaning names can clash.
                Therefore, we avoid a user having to define a username, rather, ask the central server to provide it.
-               After getting the username, we store it in the user's home directory in a file named `.cl_username`.
+               After getting the username, we store it in the user's home directory in a file named `.LM_CREDS`.
                This way, the user can change it at any time, and it will be used in all future logs without needing to request it again.
             """
-            if not os.path.exists(os.path.expanduser("~/.cl_username")):
+            login = get_login()
+            if os.getenv('lm_auth_token') and not os.getenv('lm_username'):
+                self._sync_identity_from_session()
+
+            if not os.getenv('lm_username'):
                 try:
-                    login = get_login()
                     username_endpoint = self.central.get('get_username_endpoint', '/api/get_username')
-                    response = requests.get(f"{self.central.get('url', '')}/{username_endpoint}?base={login}", headers=self.central.get('headers', {}), timeout=(3, 3))
+                    response = requests.get(f"{self.central.get('url', '')}/{username_endpoint}?base={login}", headers=_auth_headers(self.central.get('headers', {})), timeout=(3, 3))
                     if response.status_code == 200:
-                        os.environ['CL_USERNAME'] = response.json().get('username') or 'unknown' # Unknown will probably never be reached, but it's a fallback.
-                        if os.environ.get('CL_USERNAME') != 'unknown':
-                            with open(os.path.expanduser("~/.cl_username"), 'w') as f:
-                                f.write(os.environ['CL_USERNAME'])
+                        os.environ['lm_username'] = response.json().get('username') or 'unknown' # Unknown will probably never be reached, but it's a fallback.
+                        if os.getenv('lm_username') != 'unknown':
+                            _persist_lm_creds(username=os.environ['lm_username'])
                     else:
-                        os.environ['CL_USERNAME'] = 'unknown'
+                        os.environ['lm_username'] = 'unknown'
                 except Exception:
-                    os.environ['CL_USERNAME'] = 'unknown'
-            else:
-                get_login()
+                    os.environ['lm_username'] = 'unknown'
 
             if 'socketio' not in globals():
                 ch = HTTPTransporter(central=self.central)
@@ -277,6 +404,62 @@ class LogMachine(logging.Logger):
                 self.central and f" central logging to {self.central.get('url', '')}" or "out central logging"
             )
         )
+
+    def _sync_identity_from_session(self):
+        if not self.central:
+            return
+
+        token = os.getenv('lm_auth_token')
+        if not token:
+            return
+
+        try:
+            session_url = f"{self.central.get('url', '').rstrip('/')}/api/auth/session"
+            response = requests.get(
+                session_url,
+                headers=_auth_headers(self.central.get('headers', {})),
+                timeout=(3, 3),
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                user = payload.get('user', {})
+                username = user.get('username')
+                if username:
+                    _persist_lm_creds(username=username, auth_token=token)
+        except Exception:
+            pass
+
+    def login(self, timeout_seconds=180):
+        """
+        Launch browser authentication and persist the resulting auth token for future logs.
+
+        :param timeout_seconds: Maximum time to wait for browser callback.
+        :return: self
+        """
+        if not self.central or not self.central.get('url'):
+            raise ValueError("Browser login requires central logging configuration with a 'url'.")
+        
+        if os.getenv('lm_auth_token') and os.getenv('lm_username'):
+            sys.stdout.write("Already logged in with central server. Using existing credentials.\n")
+
+        elif self.central.get("headers", {}).get("Authorization") or os.getenv('lm_auth_token'):
+            self._sync_identity_from_session()
+
+        else:
+            result = _sdk_login_via_browser(self.central.get('url', ''), timeout_seconds=timeout_seconds)
+            token = result.get('token')
+            if not token:
+                raise RuntimeError("Login completed without an auth token.")
+
+            username = result.get('username')
+            _persist_lm_creds(username=username, auth_token=token)
+            self.central.setdefault('headers', {})
+            if 'Authorization' not in self.central['headers'] and 'authorization' not in self.central['headers']:
+                self.central['headers']['Authorization'] = f"Bearer {token}"
+
+            self._sync_identity_from_session()
+
+        return self
 
     def success(self, msg, *args, **kwargs) -> None:
         """
