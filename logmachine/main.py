@@ -6,12 +6,9 @@ import queue
 import re
 import requests
 import sys
-import threading
 import time
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import QueueHandler, QueueListener
-from urllib.parse import parse_qs, quote, urlparse
 
 
 try:
@@ -60,78 +57,61 @@ def _persist_lm_creds(username=None, auth_token=None):
             f.write(f"{key}={value}\n")
 
 
-class _AuthCallbackHandler(BaseHTTPRequestHandler):
-    result = {"token": None, "username": None, "provider": None, "error": None}
+def _sdk_login_via_device_flow(central_url, timeout_seconds=180):
+    start_url = f"{central_url.rstrip('/')}/api/auth/device/start"
+    start_response = requests.post(start_url, timeout=(5, 10))
+    if start_response.status_code != 200:
+        raise RuntimeError(f"Failed to start device login flow: {start_response.text}")
 
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        query = parse_qs(parsed.query)
-        token = query.get("token", [None])[0]
-        username = query.get("username", [None])[0] or query.get("display_name", [None])[0]
-        provider = query.get("provider", [None])[0]
-        error = query.get("error", [None])[0]
+    payload = start_response.json()
+    device_code = payload.get("device_code")
+    verification_uri_complete = payload.get("verification_uri_complete")
+    user_code = payload.get("user_code")
+    interval = max(int(payload.get("interval", 3)), 1)
 
-        if parsed.path != "/callback":
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        if error:
-            _AuthCallbackHandler.result = {"token": None, "username": username, "provider": provider, "error": error}
-            self.send_response(400)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(b"<h3>LogMachine login failed. You can close this tab.</h3>")
-            return
-
-        if token:
-            _AuthCallbackHandler.result = {"token": token, "username": username, "provider": provider, "error": None}
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(b"<h3>LogMachine login complete. You can close this tab and return to your terminal.</h3>")
-            return
-
-        self.send_response(400)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(b"<h3>LogMachine login did not return a token. You can close this tab.</h3>")
-
-    def log_message(self, format, *args):
-        return
-
-
-def _sdk_login_via_browser(central_url, timeout_seconds=180):
-    _AuthCallbackHandler.result = {"token": None, "username": None, "provider": None, "error": None}
-    server = HTTPServer(("127.0.0.1", 0), _AuthCallbackHandler)
-    port = server.server_address[1]
-    callback_url = f"http://127.0.0.1:{port}/callback"
-
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
+    if not device_code or not verification_uri_complete:
+        raise RuntimeError("Device flow did not return the required login details")
 
     web_base = central_url.rstrip("/")
     if web_base.endswith("/api"):
         web_base = web_base[:-4]
 
-    login_url = f"{web_base}/auth/login?callback_url={quote(callback_url, safe='')}"
-    opened = webbrowser.open(login_url)
+    fallback_url = verification_uri_complete
+    if not fallback_url.startswith("http"):
+        fallback_url = f"{web_base}/{verification_uri_complete.lstrip('/')}"
+
+    opened = webbrowser.open(fallback_url)
     if not opened:
-        print(f"Open this URL to log in: {login_url}")
+        print("Open this URL on any device to log in:")
+        print(f"  {fallback_url}")
+
+    if verification_uri_complete:
+        print("To authenticate this device:")
+        print(f"  1) Open: {verification_uri_complete}")
+        print(f"  2) Enter code: {user_code} (if not auto-filled)")
 
     started_at = time.time()
-    try:
-        while time.time() - started_at < timeout_seconds:
-            result = _AuthCallbackHandler.result
-            if result.get("error"):
-                raise RuntimeError(f"Login failed: {result['error']}")
-            if result.get("token"):
-                return result
-            time.sleep(0.2)
-        raise TimeoutError("Timed out waiting for browser login to complete")
-    finally:
-        server.shutdown()
-        server.server_close()
+    poll_url = f"{central_url.rstrip('/')}/api/auth/device/poll"
+
+    while time.time() - started_at < timeout_seconds:
+        response = requests.post(poll_url, json={"device_code": device_code}, timeout=(5, 10))
+        if response.status_code != 200:
+            raise RuntimeError(f"Device login polling failed: {response.text}")
+
+        result = response.json()
+        status = result.get("status")
+        if status == "approved":
+            return {
+                "token": result.get("token"),
+                "username": (result.get("user") or {}).get("username"),
+                "provider": result.get("provider"),
+            }
+        if status == "expired":
+            raise TimeoutError("Login code expired before authentication completed")
+
+        time.sleep(interval)
+
+    raise TimeoutError("Timed out waiting for device login to complete")
 
 
 def creds_file_to_dict():
@@ -308,6 +288,29 @@ class CustomFormatter(logging.Formatter):
 {level_fmt} {record.getMessage()}
 🏁"""
 
+
+class DebugLevelFilter(logging.Filter):
+    def __init__(self, debug_level):
+        super().__init__()
+        self.debug_level = debug_level
+        self.level_map = {
+            1: ['ERROR'],
+            2: ['SUCCESS'],
+            3: ['WARNING'],
+            4: ['INFO'],
+            5: ['ERROR','WARNING'],
+            6: ['INFO','SUCCESS'],
+            7: ['ERROR','WARNING','INFO']
+        }
+
+    def filter(self, record):
+        if self.debug_level == 0:
+            return True
+
+        allowed = self.level_map.get(self.debug_level, [])
+        return record.levelname in allowed
+
+
 class LogMachine(logging.Logger):
     def __init__(self, name="", *args, **kwargs) -> None:
         super().__init__(name, *args, level=int(kwargs.get('debug_level', 0)))
@@ -341,22 +344,9 @@ class LogMachine(logging.Logger):
                After getting the username, we store it in the user's home directory in a file named `.LM_CREDS`.
                This way, the user can change it at any time, and it will be used in all future logs without needing to request it again.
             """
-            login = get_login()
-            if os.getenv('lm_auth_token') and not os.getenv('lm_username'):
-                self._sync_identity_from_session()
-
-            if not os.getenv('lm_username'):
-                try:
-                    username_endpoint = self.central.get('get_username_endpoint', '/api/get_username')
-                    response = requests.get(f"{self.central.get('url', '')}/{username_endpoint}?base={login}", headers=_auth_headers(self.central.get('headers', {})), timeout=(3, 3))
-                    if response.status_code == 200:
-                        os.environ['lm_username'] = response.json().get('username') or 'unknown' # Unknown will probably never be reached, but it's a fallback.
-                        if os.getenv('lm_username') != 'unknown':
-                            _persist_lm_creds(username=os.environ['lm_username'])
-                    else:
-                        os.environ['lm_username'] = 'unknown'
-                except Exception:
-                    os.environ['lm_username'] = 'unknown'
+            self.login()
+            if not self.central.get('room'):
+                self.central['room'] = f"{get_login()}_logs"
 
             if 'socketio' not in globals():
                 ch = HTTPTransporter(central=self.central)
@@ -374,34 +364,16 @@ class LogMachine(logging.Logger):
         self.addHandler(QueueHandler(self.queue))
 
         # Filter console output based on debug_level
-        class DebugLevelFilter(logging.Filter):
-            def __init__(self, debug_level):
-                super().__init__()
-                self.debug_level = debug_level
-
-            def filter(self, record):
-                if self.debug_level == 0:
-                    return True
-
-                level_map = {
-                    1: ['ERROR'],
-                    2: ['SUCCESS'],
-                    3: ['WARNING'],
-                    4: ['INFO'],
-                    5: ['ERROR','WARNING'],
-                    6: ['INFO','SUCCESS'],
-                    7: ['ERROR','WARNING','INFO']
-                }
-                allowed = level_map.get(self.debug_level, [])
-                return record.levelname in allowed
-
-        ch.addFilter(DebugLevelFilter(self.debug_level if not self.verbose else 0))
+        self.debug_filter = DebugLevelFilter(self.debug_level if not self.verbose else 0)
+        ch.addFilter(self.debug_filter)
         self.listener = QueueListener(self.queue, fh, eh, ch)
         self.listener.start()
         atexit.register(self.listener.stop)
         sys.stdout.write("LogMachine initialized with debug level {} with{}\n".format(
                 self.debug_level,
-                self.central and f" central logging to {self.central.get('url', '')}" or "out central logging"
+                self.central and
+                f" central logging to {self.central.get('url', '')} in room: {self.central.get('room')}" or
+                "out central logging"
             )
         )
 
@@ -429,24 +401,33 @@ class LogMachine(logging.Logger):
         except Exception:
             pass
 
-    def login(self, timeout_seconds=180):
+    def login(self, timeout_seconds=180, api_key=None):
         """
-        Launch browser authentication and persist the resulting auth token for future logs.
+        Authenticate logger with either an API key or device flow.
 
         :param timeout_seconds: Maximum time to wait for browser callback.
+        :param api_key: Optional API key for non-interactive environments.
         :return: self
         """
         if not self.central or not self.central.get('url'):
-            raise ValueError("Browser login requires central logging configuration with a 'url'.")
-        
+            raise ValueError("Login requires central logging configuration with a 'url'.")
+
         if os.getenv('lm_auth_token') and os.getenv('lm_username'):
             sys.stdout.write("Already logged in with central server. Using existing credentials.\n")
 
+        direct_api_key = api_key or os.getenv('LM_API_KEY') or os.getenv('lm_api_key')
+        if direct_api_key:
+            _persist_lm_creds(auth_token=direct_api_key)
+            self.central.setdefault('headers', {})
+            self.central['headers']['Authorization'] = f"Bearer {direct_api_key}"
+            self._sync_identity_from_session()
+            return self
+        
         elif self.central.get("headers", {}).get("Authorization") or os.getenv('lm_auth_token'):
             self._sync_identity_from_session()
 
         else:
-            result = _sdk_login_via_browser(self.central.get('url', ''), timeout_seconds=timeout_seconds)
+            result = _sdk_login_via_device_flow(self.central.get('url', ''), timeout_seconds=timeout_seconds)
             token = result.get('token')
             if not token:
                 raise RuntimeError("Login completed without an auth token.")
@@ -461,6 +442,14 @@ class LogMachine(logging.Logger):
 
         return self
 
+    def logout(self) -> None:
+        """
+        Clear stored credentials and log out from central server.
+        """
+        _persist_lm_creds(username='', auth_token='')
+        self.central["headers"] = {k: v for k, v in self.central.get("headers", {}).items() if k.lower() != "authorization"}
+        sys.stdout.write("Logged out and cleared credentials.\n")
+
     def success(self, msg, *args, **kwargs) -> None:
         """
         Log a message with level SUCCESS (25).
@@ -474,18 +463,20 @@ class LogMachine(logging.Logger):
         if self.isEnabledFor(25):
             self._log(25, msg, args, stacklevel=2, **kwargs)
 
-    def new_level(self, level_name: str, level_num: int, ansi_color="\x1b[37m") -> None:
+    def new_level(self, level_name: str, level_num: int, ansi_color="\x1b[37m", filter_num=None) -> None:
         """
         Dynamically add a new logging level.
         :param level_name: Name of the new logging level.
         :param level_num: Numeric value of the new logging level.
         :param method_name: Optional method name for the new level.
         """
-        if not hasattr(logging, level_name):
+        if not hasattr(self, level_name):
             logging.addLevelName(level_num, level_name)
             setattr(self, level_name.lower(), lambda msg, *args, **kwargs: self._log(level_num, msg, args, stacklevel=2, **kwargs))
             self.setLevel(min(self.level, level_num))  # Ensure the logger's level is set appropriately
             self.formatter.set_color(level_name, ansi_color) # Add color formatting for the new level
+            if filter_num is not None:
+                self.debug_filter.level_map[filter_num] = self.debug_filter.level_map.get(filter_num, []) + [level_name]
 
     def parse_log(self, log_text) -> dict | None:
         log_text = log_text.strip()
@@ -537,11 +528,7 @@ class LogMachine(logging.Logger):
 
 
 def default_logger():
-    return LogMachine('default_logger', debug_level=0, verbose=False, central={
-        'url': 'https://logmachine.bufferpunk.com',
-        'room': f'{get_login()}_logs',
-        'headers': {}
-    })
+    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://logmachine.bufferpunk.com' }).login()
 
 
 logging.setLoggerClass(LogMachine)

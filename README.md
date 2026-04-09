@@ -92,6 +92,23 @@ What `.login()` does:
 * Stores `lm_auth_token` and `lm_username` in `~/.LM_CREDS` for reuse
 * Automatically attaches `Authorization: Bearer ...` to central log transport
 
+### Non-Interactive Server Login (API Key)
+
+For headless environments, generate an API key from your LogMachine profile page and pass it to `.login()`:
+
+```python
+from logmachine import LogMachine
+
+logger = LogMachine("with_central", central={
+    "url": "https://logmachine.bufferpunk.com",
+    "room": "team_alpha",
+}).login(api_key="lmk_your_api_key")
+
+logger.info("Authenticated without browser interaction")
+```
+
+You can also use `LM_API_KEY` as an environment variable instead of passing `api_key` directly.
+
 ---
 
 ## 🎨 Log Format
