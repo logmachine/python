@@ -5,27 +5,15 @@ import os
 import queue
 import re
 import requests
+import socketio
 import sys
 import time
 import webbrowser
 from logging.handlers import QueueHandler, QueueListener
+from datetime import datetime, timedelta
 
 
-try:
-    """
-    We've removed the socketio and websockets dependency from the core of LogMachine to make it more lightweight and avoid forcing users to install it.
-    The Logger will use socketio if available in the environment, otherwise it will fall back to HTTP requests for log transport.
-    Socketio is generally more efficient for real-time log transport,
-    while HTTP can be used as a fallback for environments where socketio is not available or not desired.
-    Socketio takes precedence over HTTP if both are available, as it provides a more robust and efficient transport mechanism for real-time logging.
-    """
-
-    import socketio
-except ImportError:
-    pass
-
-
-LM_CREDS_PATH = os.path.expanduser("~/.LM_CREDS")
+LM_CREDS_PATH = os.path.expanduser("~/.logmachine")
 
 
 def _auth_headers(headers=None):
@@ -36,7 +24,7 @@ def _auth_headers(headers=None):
     return merged
 
 
-def _persist_lm_creds(username=None, auth_token=None):
+def _persist_lm_creds(username=None, auth_token=None, expiry=None):
     current = {}
     if os.path.exists(LM_CREDS_PATH):
         with open(LM_CREDS_PATH, "r") as f:
@@ -51,6 +39,9 @@ def _persist_lm_creds(username=None, auth_token=None):
     if auth_token:
         current["lm_auth_token"] = auth_token
         os.environ["lm_auth_token"] = auth_token
+    if expiry:
+        current["lm_expiry"] = expiry
+        os.environ["lm_expiry"] = expiry
 
     with open(LM_CREDS_PATH, "w") as f:
         for key, value in current.items():
@@ -89,6 +80,7 @@ def _sdk_login_via_device_flow(central_url, timeout_seconds=180):
         print("To authenticate this device:")
         print(f"  1) Open: {verification_uri_complete}")
         print(f"  2) Enter code: {user_code} (if not auto-filled)")
+        print("\x1b[1m\e[3mNOTE: For a better experience, use an API KEY\x1b[0m\n")
 
     started_at = time.time()
     poll_url = f"{central_url.rstrip('/')}/api/auth/device/poll"
@@ -105,6 +97,7 @@ def _sdk_login_via_device_flow(central_url, timeout_seconds=180):
                 "token": result.get("token"),
                 "username": (result.get("user") or {}).get("username"),
                 "provider": result.get("provider"),
+                "expires_in": result.get("expires_in")
             }
         if status == "expired":
             raise TimeoutError("Login code expired before authentication completed")
@@ -157,7 +150,7 @@ class HTTPTransporter(logging.StreamHandler):
         """
         super().__init__()
         self.central = kwargs.get('central', None)
-        self.session = requests.Session()  # Use a session for connection pooling
+        self.session = requests.Session()
 
     def close(self):
         try:
@@ -201,6 +194,7 @@ class SocketIOTransporter(logging.StreamHandler):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.central = kwargs.get('central', {})
+        self.formatter = kwargs.get('formatter')
         self.sio = socketio.Client()
         if not self.central:
             raise ValueError("""Central configuration must be provided for SocketIOTransporter.
@@ -208,12 +202,32 @@ class SocketIOTransporter(logging.StreamHandler):
             """)
         try:
             self.sio.connect(self.central.get('url', ''),
-                headers=_auth_headers(self.central.get('headers', {})),
                 socketio_path=self.central.get('endpoint', '/api/socket.io/'),
-                wait_timeout=3
+                retry=True,
+                auth={'token': os.getenv('lm_auth_token')}
             )
+            self.sio.emit('join', {'room': self.central.get('room')})
+            self.sio.on('log', self.log)
+            self.sio.on('error', print)
         except Exception as e:
             raise ConnectionError(f"Failed to connect to central server via SocketIO: {e}")
+
+    def log(self, data):
+        """
+        Handle incoming log messages from the central server and log them locally
+        Without sending them back to the central to avoid infinite loops.
+        :param data: The log data received from the central server.
+        """
+        record = logging.LogRecord(
+            name="Central",
+            level=getattr(logging, data.get('level', 'INFO').upper(), logging.INFO),
+            pathname=data.get('module', 'unknown') + " :external",
+            lineno=0,
+            msg=data.get('message', ''),
+            args=(),
+            exc_info=None
+        )
+        print(self.formatter.format(record))
 
     def close(self):
         try:
@@ -282,7 +296,7 @@ class CustomFormatter(logging.Formatter):
         level_fmt = f"{color}{level_fmt}{self.reset}"
         record.asctime = self.formatTime(record, self.datefmt)
         module_file = record.pathname
-        parent_dir = os.path.basename(os.path.dirname(record.pathname)) if module_file != '<stdin>' else 'stdin'
+        parent_dir = (os.path.basename(os.path.dirname(record.pathname)) or module_file) if module_file != '<stdin>' else 'stdin'
 
         return f"""{self.colors.get('DEBUG')}({username}{self.reset} @ {self.colors.get('WARNING') + parent_dir + self.reset}) 🤌 CL Timing: {color}[ {record.asctime} ]{self.reset}
 {level_fmt} {record.getMessage()}
@@ -334,6 +348,7 @@ class LogMachine(logging.Logger):
         fh.setLevel(self.debug_level)
         eh = logging.FileHandler(self.error_file)
         eh.setLevel(logging.ERROR)
+        self.formatter = CustomFormatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%dT%H:%M:%S%z')
 
         # Console handler
         if self.central:
@@ -344,20 +359,19 @@ class LogMachine(logging.Logger):
                After getting the username, we store it in the user's home directory in a file named `.LM_CREDS`.
                This way, the user can change it at any time, and it will be used in all future logs without needing to request it again.
             """
-            self.login()
+            self.login(api_key=self.central.get('API_KEY') or self.central.get('api_key'))
             if not self.central.get('room'):
-                self.central['room'] = f"{get_login()}_logs"
+                self.central['room'] = get_login()
 
             if 'socketio' not in globals():
                 ch = HTTPTransporter(central=self.central)
             else:
-                ch = SocketIOTransporter(central=self.central)
+                ch = SocketIOTransporter(central=self.central, formatter=self.formatter)
         else:
             ch = logging.StreamHandler()
 
         ch.setLevel(logging.DEBUG)
 
-        self.formatter = CustomFormatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%dT%H:%M:%S%z')
         fh.setFormatter(self.formatter)
         eh.setFormatter(self.formatter)
         ch.setFormatter(self.formatter)
@@ -412,9 +426,6 @@ class LogMachine(logging.Logger):
         if not self.central or not self.central.get('url'):
             raise ValueError("Login requires central logging configuration with a 'url'.")
 
-        if os.getenv('lm_auth_token') and os.getenv('lm_username'):
-            sys.stdout.write("Already logged in with central server. Using existing credentials.\n")
-
         direct_api_key = api_key or os.getenv('LM_API_KEY') or os.getenv('lm_api_key')
         if direct_api_key:
             _persist_lm_creds(auth_token=direct_api_key)
@@ -423,7 +434,10 @@ class LogMachine(logging.Logger):
             self._sync_identity_from_session()
             return self
         
-        elif self.central.get("headers", {}).get("Authorization") or os.getenv('lm_auth_token'):
+        elif self.central.get("headers", {}).get("Authorization"):
+            self._sync_identity_from_session()
+
+        elif os.getenv('lm_auth_token') and os.getenv('lm_auth_token_expiry') and datetime.strptime(os.getenv('lm_auth_token_expiry'), '%Y-%m-%dT%H:%M:%S%z') > datetime.now().astimezone():
             self._sync_identity_from_session()
 
         else:
@@ -433,7 +447,7 @@ class LogMachine(logging.Logger):
                 raise RuntimeError("Login completed without an auth token.")
 
             username = result.get('username')
-            _persist_lm_creds(username=username, auth_token=token)
+            _persist_lm_creds(username=username, auth_token=token, expiry=(str(datetime.now() + timedelta(seconds=result.get('expires_in', 0)).astimezone())))
             self.central.setdefault('headers', {})
             if 'Authorization' not in self.central['headers'] and 'authorization' not in self.central['headers']:
                 self.central['headers']['Authorization'] = f"Bearer {token}"
@@ -446,7 +460,7 @@ class LogMachine(logging.Logger):
         """
         Clear stored credentials and log out from central server.
         """
-        _persist_lm_creds(username='', auth_token='')
+        _persist_lm_creds(username='', auth_token='', expiry='')
         self.central["headers"] = {k: v for k, v in self.central.get("headers", {}).items() if k.lower() != "authorization"}
         sys.stdout.write("Logged out and cleared credentials.\n")
 

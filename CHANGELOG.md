@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-05-01
+- **Python**: Re-introduced python-socketio as a dependency for better WebSocket support and real-time features.
+- **Python**: Updated `SocketIOTransporter` to use receive logs from the server in real-time, allowing for more interactive logging experiences.
+- **Python**: Added API_KEY support inside the central configuration for easier authentication management.
+- **Python**: Improved error handling in `SocketIOTransporter`
+- **Python**: Added better authentication management using environment
+- **Python**: Added support for token refresh in the authentication flow to maintain long-lived sessions without requiring frequent logins.
+- **Python**: Removed `get_username_endpoint` configuration key as it is no longer needed with the new authentication flow.
+
 ## [2.3.2] - 2026-04-05
 
 - **Python**: Refactored `HTTPTransporter` and `SocketIOTransporter` to directly construct log data in `emit` methods, removing dependency on `parse_log`.
