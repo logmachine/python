@@ -542,7 +542,7 @@ class LogMachine(logging.Logger):
 
 
 def default_logger():
-    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://logmachine.bufferpunk.com' }).login()
+    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://logmachine.bufferpunk.com' })
 
 
 logging.setLoggerClass(LogMachine)

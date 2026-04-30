@@ -15,7 +15,7 @@
 - 🧩 **Pluggable backends**: send logs to a central server or local files
 - 📦 **Simple JSON output** for web dashboards or collectors
 - 🧽 Strips ANSI escape codes from logs for clean parsing
-- 🧠 Automatically resolves usernames and session tokens in `~/.LM_CREDS`
+- 🧠 Automatically resolves usernames and session tokens in `~/.logmachine`
 
 ---
 
@@ -61,9 +61,10 @@ To use your own central logging server, provide the configuration as shown below
 ```python
 logger_config = {
     "url": "https://logmachine.bufferpunk.com",  # Base server URL
-    "room": "team_alpha",                # Your organization or room
-    "endpoint": "/api/logs",             # Optional, defaults to /api/logs for HTTP or /api/socket.io/ for Socket.IO transport.
-    "headers": {"Authorization": "Bearer token"}, # The central server should know your username based on the token you provide here. This is optional and depends on your central server's authentication mechanism.
+    "room": "team_alpha",                # Your organization or room. This is optional and defaults to your username
+    "endpoint": "/api/logs",             # Optional. Defaults to /api/logs for HTTP or /api/socket.io/ for Socket.IO transport.
+    "api_key": "your_api_key",           # Optional. This is for the best authentication experience
+    "headers": {"Authorization": "Bearer token"}, # Optional. The central server should know your username based on the token you provide here. This is optional and depends on your central server's authentication mechanism.
 }
 logger = LogMachine("with_central", debug_level=0, central=logger_config, socketio=True)
 logger.success("Central logging is working!")
@@ -87,14 +88,14 @@ logger.info("Now logging as an authenticated user")
 
 What `.login()` does:
 
-* Opens your browser to the central auth page
-* Waits for a localhost callback to complete authentication
-* Stores `lm_auth_token` and `lm_username` in `~/.LM_CREDS` for reuse
+* Opens your browser to the central auth page or uses your API KEY if provided
+* Waits for a localhost callback to complete authentication (if using browser login)
+* Stores `lm_auth_token` and `lm_username` in `~/.logmachine` for reuse
 * Automatically attaches `Authorization: Bearer ...` to central log transport
 
 ### Non-Interactive Server Login (API Key)
 
-For headless environments, generate an API key from your LogMachine profile page and pass it to `.login()`:
+For headless environments, generate an API key from your LogMachine profile page and put it in your env or pass it directly into the config. This allows you to authenticate without any browser interaction while still associating logs with your user identity.
 
 ```python
 from logmachine import LogMachine
@@ -102,12 +103,13 @@ from logmachine import LogMachine
 logger = LogMachine("with_central", central={
     "url": "https://logmachine.bufferpunk.com",
     "room": "team_alpha",
-}).login(api_key="lmk_your_api_key")
+    "api_key": "your_api_key_here"
+}).login()
 
 logger.info("Authenticated without browser interaction")
 ```
 
-You can also use `LM_API_KEY` as an environment variable instead of passing `api_key` directly.
+We recommend setting the `LM_API_KEY` environment variable instead of passing `api_key` directly.
 
 ---
 
@@ -137,7 +139,7 @@ Sample (terminal):
 
 ```python
 logger.new_level("CRITICAL_HACK", 60)
-logger.new_level("CRITICAL_HACK", 60, color="\033[38;5;13m")  # Optional color... does your girlfriend love pink? Maybe you should be in a relationship with your terminal.
+logger.new_level("CRITICAL_HACK", 60, ansi_color="\033[38;5;13m")  # Optional color... does your girlfriend love pink? Maybe you should be in a relationship with your terminal.
 logger.critical_hack("Zero day found!")
 ```
 
@@ -151,9 +153,10 @@ This is useful for sending logs to web dashboards or log collectors that expect 
 It reads the your log files, parses the log entries, and outputs them as JSON objects.
 
 ```python
-json_logs = log.jsonifier()
+json_logs = logger.jsonifier()
 for entry in json_logs:
     print(entry)
+    # Or even send them to a web dashboard or log collector!
 ```
 
 ---
@@ -164,9 +167,9 @@ To use Socket.IO, your central server must support this event:
 
 * `log`: Receives log payloads: `{ room: string, data: object }`
 
-For central username resolution, your server should expose an endpoint like:
-
-* `GET /api/get_username?base=localname`: Returns `{ "username": "..." }`
+For central logging, your server should expose an endpoint for socket.io transport or HTTP transport like:
+* `POST /api/logs` (expects `Authorization` header and processes logs accordingly)
+* `/api/socket.io/` (for Socket.IO transport, expects auth token in connection handshake and processes logs accordingly)
 
 For browser auth with `.login()`, your server should also expose:
 
@@ -181,7 +184,7 @@ For browser auth with `.login()`, your server should also expose:
 
 * `lm_username`: Username override used by formatter and transport payload
 * `lm_auth_token`: Bearer token automatically sent to central server when present
-* Credentials are persisted in `~/.LM_CREDS`
+* Credentials are persisted in `~/.logmachine`
 
 ---
 
@@ -199,6 +202,7 @@ For browser auth with `.login()`, your server should also expose:
 | `url`           | `str`  | Central server base URL                            |
 | `room`          | `str`  | Logical group or org name                          |
 | `endpoint`      | `str`  | HTTP endpoint for POST logs (default: `/api/logs` or `/api/socket.io/` for Socket.IO) |
+| `api_key`       | `str`  | API key for non-interactive auth (optional)        |
 | `headers`       | `dict` | Extra headers to send (e.g. auth token)            |
 
 ---
