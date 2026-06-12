@@ -80,7 +80,7 @@ def _sdk_login_via_device_flow(central_url, timeout_seconds=180):
         print("To authenticate this device:")
         print(f"  1) Open: {verification_uri_complete}")
         print(f"  2) Enter code: {user_code} (if not auto-filled)")
-        print("\x1b[1m\e[3mNOTE: For a better experience, use an API KEY\x1b[0m\n")
+        print("\x1b[1mNOTE: For a better experience, use an API KEY\x1b[0m\n")
 
     started_at = time.time()
     poll_url = f"{central_url.rstrip('/')}/api/auth/device/poll"
@@ -93,6 +93,7 @@ def _sdk_login_via_device_flow(central_url, timeout_seconds=180):
         result = response.json()
         status = result.get("status")
         if status == "approved":
+            print("Device login approved! Finalizing authentication...")
             return {
                 "token": result.get("token"),
                 "username": (result.get("user") or {}).get("username"),
@@ -433,11 +434,11 @@ class LogMachine(logging.Logger):
             self.central['headers']['Authorization'] = f"Bearer {direct_api_key}"
             self._sync_identity_from_session()
             return self
-        
+
         elif self.central.get("headers", {}).get("Authorization"):
             self._sync_identity_from_session()
 
-        elif os.getenv('lm_auth_token') and os.getenv('lm_auth_token_expiry') and datetime.strptime(os.getenv('lm_auth_token_expiry'), '%Y-%m-%dT%H:%M:%S%z') > datetime.now().astimezone():
+        elif os.getenv('lm_auth_token') and os.getenv('lm_expiry') and datetime.fromisoformat(os.getenv('lm_expiry', str(datetime.now()))) > datetime.now():
             self._sync_identity_from_session()
 
         else:
@@ -447,7 +448,7 @@ class LogMachine(logging.Logger):
                 raise RuntimeError("Login completed without an auth token.")
 
             username = result.get('username')
-            _persist_lm_creds(username=username, auth_token=token, expiry=(str(datetime.now() + timedelta(seconds=result.get('expires_in', 0)).astimezone())))
+            _persist_lm_creds(username=username, auth_token=token, expiry=(str(datetime.now() + timedelta(seconds=result.get('expires_in', 0)))))
             self.central.setdefault('headers', {})
             if 'Authorization' not in self.central['headers'] and 'authorization' not in self.central['headers']:
                 self.central['headers']['Authorization'] = f"Bearer {token}"
@@ -542,7 +543,7 @@ class LogMachine(logging.Logger):
 
 
 def default_logger():
-    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://logmachine.bufferpunk.com' })
+    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://logmachine.org' })
 
 
 logging.setLoggerClass(LogMachine)

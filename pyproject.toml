@@ -1,12 +1,12 @@
 [project]
 name = "logmachine"
-version = "2.4.0"
+version = "2.4.2"
 description = "Collaborative, beautiful logging system for distributed developers"
 readme = "README.md"
 requires-python = ">=3.7"
 license = { file = "LICENSE" }
 authors = [
-    { name="Mugabo Gusenga", email="mugabo@bufferpunk.com" }
+    { name="Buffer Punk", email="software@bufferpunk.com" }
 ]
 keywords = ["logging", "devtools", "collaborative", "open source", "cli", "json", "ansi"]
 classifiers = [
@@ -16,7 +16,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://logmachine.bufferpunk.com"
+Homepage = "https://logmachine.org"
 Documentation = "https://github.com/logmachine/python"
 Source = "https://github.com/logmachine/python"
 Tracker = "https://github.com/logmachine/python/issues"

@@ -47,7 +47,7 @@ logger.warning("This is a warning message.")
 
 ### With Central Logging (HTTP or Socket.IO)
 
-You can use the default logger with central logging pointing to "https://logmachine.bufferpunk.com"  
+You can use the default logger with central logging pointing to "https://logmachine.org"  
 
 ```python
 from logmachine import default_logger
@@ -60,7 +60,7 @@ To use your own central logging server, provide the configuration as shown below
 
 ```python
 logger_config = {
-    "url": "https://logmachine.bufferpunk.com",  # Base server URL
+    "url": "https://logmachine.org",  # Base server URL
     "room": "team_alpha",                # Your organization or room. This is optional and defaults to your username
     "endpoint": "/api/logs",             # Optional. Defaults to /api/logs for HTTP or /api/socket.io/ for Socket.IO transport.
     "api_key": "your_api_key",           # Optional. This is for the best authentication experience
@@ -79,7 +79,7 @@ directly from the SDK. The provider selection (Google/GitHub) happens in the bro
 from logmachine import LogMachine
 
 logger = LogMachine("with_central", central={
-    "url": "https://logmachine.bufferpunk.com",
+    "url": "https://logmachine.org",
     "room": "team_alpha",
 }).login()
 
@@ -101,7 +101,7 @@ For headless environments, generate an API key from your LogMachine profile page
 from logmachine import LogMachine
 
 logger = LogMachine("with_central", central={
-    "url": "https://logmachine.bufferpunk.com",
+    "url": "https://logmachine.org",
     "room": "team_alpha",
     "api_key": "your_api_key_here"
 }).login()
@@ -216,7 +216,7 @@ MIT License
 ## 🙋‍♂️ Author
 
 Mugabo Gusenga
-[logmachine.bufferpunk.com](https://logmachine.bufferpunk.com)
+[logmachine.org](https://logmachine.org)
 [GitHub](https://github.com/logmachine/python)
 
 ---
