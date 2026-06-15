@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-06-15
+
+- **Python**: Switched central transport to Socket.IO-only and removed the legacy `HTTPTransporter`.
+- **Python**: Simplified logger initialization by removing queue-based handlers and using direct `FileHandler` + `StreamHandler` / `SocketIOTransporter`.
+- **Python**: Improved custom log level handling with better validation and ANSI color support via `new_level()`.
+- **Python**: Guarded `logout()` so credentials are cleared only when central logging is configured.
+- **Python**: Improved `SocketIOTransporter` error handling and connection feedback.
+
 ## [2.4.2] - 2026-06-12
 
 - **Python**: Fixed bug in time handling that triggered re-authentication when the token was still valid, causing unnecessary logouts and disruptions in logging.

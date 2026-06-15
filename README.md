@@ -2,14 +2,14 @@
 
 > Collaborative, beautiful logging system for distributed developers
 
-**logmachine** helps teams log smarter. It’s a fully pluggable logging system that supports colored output, JSON parsing, structured log forwarding via **HTTP or Socket.IO**, and log centralization — all from a standard Python logging interface.
+**logmachine** helps teams log smarter. It’s a fully pluggable logging system that supports colored output, JSON parsing, structured log forwarding via **Socket.IO**, and log centralization — all from a standard Python logging interface.
 
 ---
 
 ## 🚀 Features
 
-- 🔥 **Color-coded terminal logs** (DEBUG, INFO, WARNING, ERROR, SUCCESS)
-- 📤 **Log forwarding** to a central HTTP or Socket.IO server
+- 🔥 **Color-coded terminal logs** (DEBUG, INFO, WARNING, ERROR, SUCCESS, etc)
+- 📤 **Log forwarding** to a central server
 - 🪵 **Custom log levels** (add your own with `.new_level(...)`)
 - 👥 **User identity tracking** for team-based logs
 - 🧩 **Pluggable backends**: send logs to a central server or local files
@@ -36,7 +36,7 @@ from logmachine import LogMachine
 
 # Create a simple logger without central logging
 # Providing a non-empty string initializes the logger with that name, else the root logger is used to collect every single log in the python process.
-logger = LogMachine("myapp", debug_level=1)
+logger = LogMachine("myapp", level=1)
 
 logger.info("Hello, world!")
 logger.error("An error occurred!")
@@ -45,7 +45,7 @@ logger.debug("Debugging information here.")
 logger.warning("This is a warning message.")
 ```
 
-### With Central Logging (HTTP or Socket.IO)
+### With Central Logging
 
 You can use the default logger with central logging pointing to "https://logmachine.org"  
 
@@ -61,12 +61,12 @@ To use your own central logging server, provide the configuration as shown below
 ```python
 logger_config = {
     "url": "https://logmachine.org",  # Base server URL
-    "room": "team_alpha",                # Your organization or room. This is optional and defaults to your username
-    "endpoint": "/api/logs",             # Optional. Defaults to /api/logs for HTTP or /api/socket.io/ for Socket.IO transport.
-    "api_key": "your_api_key",           # Optional. This is for the best authentication experience
-    "headers": {"Authorization": "Bearer token"}, # Optional. The central server should know your username based on the token you provide here. This is optional and depends on your central server's authentication mechanism.
+    "room": "team_alpha",             # Your organization or room. This is optional and defaults to your username
+    "endpoint": "/api/socket.io/",    # Optional. Defaults to /api/socket.io/ for Socket.IO transport.
+    "api_key": "your_api_key",        # Optional. This is for the best authentication experience
+    "headers": {"Authorization": "Bearer token"}, # Optional. The central server should know your username based on the token you provide here.
 }
-logger = LogMachine("with_central", debug_level=0, central=logger_config, socketio=True)
+logger = LogMachine("with_central", level=0, central=logger_config)
 logger.success("Central logging is working!")
 ```
 
@@ -81,19 +81,19 @@ from logmachine import LogMachine
 logger = LogMachine("with_central", central={
     "url": "https://logmachine.org",
     "room": "team_alpha",
-}).login()
+})
+# LogMachine opens a browser session, then waits for you to log in.
 
 logger.info("Now logging as an authenticated user")
 ```
 
-What `.login()` does:
+What LogMachine does:
 
 * Opens your browser to the central auth page or uses your API KEY if provided
-* Waits for a localhost callback to complete authentication (if using browser login)
-* Stores `lm_auth_token` and `lm_username` in `~/.logmachine` for reuse
-* Automatically attaches `Authorization: Bearer ...` to central log transport
+* Waits for user to complete authentication (if using browser login)
+* Stores the authentication, and continues to logging
 
-### Non-Interactive Server Login (API Key)
+### Non-Interactive Server Login using an API Key (Recommended)
 
 For headless environments, generate an API key from your LogMachine profile page and put it in your env or pass it directly into the config. This allows you to authenticate without any browser interaction while still associating logs with your user identity.
 
@@ -126,10 +126,12 @@ Every log includes:
 Sample (terminal):
 
 ```
-(username @ myapp) 🤌 CL Timing: [ 2025-08-04T11:23:52 ]
+(you @ your_app) 🤌 CL Timing: [ 2025-08-04T11:23:52 ]
 [ INFO ] Server started on port 8000
 🏁
 ```
+
+<img width="732" height="570" alt="Image" src="https://github.com/user-attachments/assets/cfb6b01d-0749-4e71-9881-c2e702a5c2c7" />
 
 ---
 
@@ -163,28 +165,12 @@ for entry in json_logs:
 
 ## 📡 Central Server Compatibility
 
-To use Socket.IO, your central server must support this event:
-
-* `log`: Receives log payloads: `{ room: string, data: object }`
-
-For central logging, your server should expose an endpoint for socket.io transport or HTTP transport like:
-* `POST /api/logs` (expects `Authorization` header and processes logs accordingly)
+For central logging, your server should expose an endpoint for Socket.IO transport like:
 * `/api/socket.io/` (for Socket.IO transport, expects auth token in connection handshake and processes logs accordingly)
 
-For browser auth with `.login()`, your server should also expose:
+To use Socket.IO transport, your central server must support this event:
 
-* `GET /api/auth/providers`
-* `GET /api/auth/start/{provider}`
-* `GET /api/auth/callback/{provider}`
-* `GET /api/auth/session`
-
----
-
-## 🤖 Environment Variables
-
-* `lm_username`: Username override used by formatter and transport payload
-* `lm_auth_token`: Bearer token automatically sent to central server when present
-* Credentials are persisted in `~/.logmachine`
+* `log`: Receives log payloads: `{ room: string, data: object }`
 
 ---
 
@@ -201,7 +187,7 @@ For browser auth with `.login()`, your server should also expose:
 | --------------- | ------ | -------------------------------------------------- |
 | `url`           | `str`  | Central server base URL                            |
 | `room`          | `str`  | Logical group or org name                          |
-| `endpoint`      | `str`  | HTTP endpoint for POST logs (default: `/api/logs` or `/api/socket.io/` for Socket.IO) |
+| `endpoint`      | `str`  | Socket.IO endpoint path for central transport (default: `/api/socket.io/`) |
 | `api_key`       | `str`  | API key for non-interactive auth (optional)        |
 | `headers`       | `dict` | Extra headers to send (e.g. auth token)            |
 
@@ -215,7 +201,7 @@ MIT License
 
 ## 🙋‍♂️ Author
 
-Mugabo Gusenga
+Buffer Punk
 [logmachine.org](https://logmachine.org)
 [GitHub](https://github.com/logmachine/python)
 

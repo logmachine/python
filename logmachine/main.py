@@ -1,15 +1,12 @@
-import atexit
 import json
 import logging
 import os
-import queue
 import re
 import requests
 import socketio
 import sys
 import time
 import webbrowser
-from logging.handlers import QueueHandler, QueueListener
 from datetime import datetime, timedelta
 
 
@@ -137,54 +134,53 @@ def get_login():
         return os.environ.get('USER', 'unknown')
 
 
-class HTTPTransporter(logging.StreamHandler):
-    """
-    A class to handle the transport of log messages using HTTP requests.
-    This class sends log messages to a central server via HTTP POST requests.
-    """
-
+class CustomFormatter(logging.Formatter):
     def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.colors = {
+            'DEBUG': '\x1b[36m',
+            'INFO': '\x1b[34m',
+            'WARNING': '\x1b[33m',
+            'ERROR': '\x1b[31m',
+            'SUCCESS': '\x1b[32m',
+            'CRITICAL': '\x1b[41m',
+            '*': '\x1b[37m'
+        }
+        self.reset = '\x1b[0m'
+        self.bold = '\x1b[1m'
+        self.level_formats = {
+            'DEBUG': f"{self.bold}[ DEBUG ]{self.reset}",
+            'INFO': f"{self.bold}[ INFO ]{self.reset}",
+            'WARNING': f"{self.bold}[ WARNING ]{self.reset}",
+            'ERROR': f"{self.bold}[ ERROR ]{self.reset}",
+            'SUCCESS': f"{self.bold}[ SUCCESS ]{self.reset}",
+            'CRITICAL': f"{self.bold} CRITICAL {self.reset}",
+            '*': f"{self.bold}[ UNKNOWN ]{self.reset}"
+        }
+
+    def set_color(self, levelname: str, color_code: str):
         """
-        Initialize the RequestsTransporter with optional log parser and central configuration.
-        :param args: Positional arguments for the parent class.
-        :param kwargs: Keyword arguments including 'log_parser' and 'central' configuration.
+        Set a custom color for a specific log level.
+        :param levelname: The name of the log level (e.g., 'DEBUG', 'INFO').
+        :param color_code: The ANSI color code to use for the specified log level.
         """
-        super().__init__()
-        self.central = kwargs.get('central', None)
-        self.session = requests.Session()
+        self.colors[levelname] = color_code
+        self.level_formats[levelname] = f"{self.bold}[ {levelname} ]{self.reset}"
 
-    def close(self):
-        try:
-            self.session.close()
-        except Exception:
-            pass
-        return super().close()
+    def format(self, record) -> str:
+        username = get_login()
 
-    def emit(self, record):
-        try:
-            super().emit(record)
-            if not self.central or not self.central.get('room'):
-                raise ValueError("""Central configuration must include 'room' for log transport.
-                    Example: {'url': 'http://central-server/api/logs', 'room': 'my_organization_name'}""")
+        levelname = record.levelname
+        color = self.colors.get(levelname) or self.colors['*']
+        level_fmt = self.level_formats.get(levelname) or self.level_formats['*']
+        level_fmt = f"{color}{level_fmt}{self.reset}"
+        record.asctime = self.formatTime(record, self.datefmt)
+        module_file = record.pathname
+        parent_dir = (os.path.basename(os.path.dirname(record.pathname)) or module_file) if module_file != '<stdin>' else 'stdin'
 
-            if record:
-                response = self.session.post(
-                    f"{self.central.get('url', '') + self.central.get('endpoint', '/api/logs')}?room={self.central.get('room', '')}",
-                    json={
-                        'user': get_login(),
-                        'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'stdin',
-                        'level': record.levelname,
-                        'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
-                        'message': record.getMessage()
-                    },
-                    timeout=(3, 3),
-                    headers={**_auth_headers(self.central.get('headers', {})), 'Content-Type': 'application/json'}
-                )
-                if response.status_code != 200:
-                    raise Exception(f"Failed to send log to central: {response.text}")
-
-        except Exception:
-            self.handleError(record)
+        return f"""{self.colors['DEBUG']}({username}{self.reset} @ {self.colors['WARNING']}{parent_dir}{self.reset}) 🤌 CL Timing: {color}[ {record.asctime} ]{self.reset}
+{level_fmt} {record.getMessage()}
+🏁"""
 
 
 class SocketIOTransporter(logging.StreamHandler):
@@ -192,15 +188,12 @@ class SocketIOTransporter(logging.StreamHandler):
     A class to handle the transport of log messages.
     This class is responsible for sending log messages to a central server.
     """
-    def __init__(self, *args, **kwargs):
+    formatter: CustomFormatter
+
+    def __init__(self, central):
         super().__init__()
-        self.central = kwargs.get('central', {})
-        self.formatter = kwargs.get('formatter')
+        self.central: dict = central
         self.sio = socketio.Client()
-        if not self.central:
-            raise ValueError("""Central configuration must be provided for SocketIOTransporter.
-                Example: {'url': 'http://central-server.com/api/socket.io/', 'room': 'my_organization_name'}
-            """)
         try:
             self.sio.connect(self.central.get('url', ''),
                 socketio_path=self.central.get('endpoint', '/api/socket.io/'),
@@ -211,7 +204,7 @@ class SocketIOTransporter(logging.StreamHandler):
             self.sio.on('log', self.log)
             self.sio.on('error', print)
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to central server via SocketIO: {e}")
+            raise ConnectionError(f"Failed to connect to central server: {e}")
 
     def log(self, data):
         """
@@ -241,15 +234,10 @@ class SocketIOTransporter(logging.StreamHandler):
     def emit(self, record):
         try:
             super().emit(record)
-            if self.central and self.sio.connected and record:
-                if not self.central.get('room'):
-                    raise ValueError("""Central configuration must include 'room' for log transport.
-                        Example: {'url': 'http://central-server.com/api/socket.io/', 'room': 'my_organization_name'}
-                    """)
-
+            if self.sio.connected and record:
                 self.sio.emit('log', {'room': self.central.get('room'), 'data': {
                     'user': get_login(),
-                    'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'stdin',
+                    'module': os.path.basename(os.path.dirname(record.pathname)) if record.pathname != '<stdin>' else 'terminal',
                     'level': record.levelname,
                     'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
                     'message': record.getMessage()
@@ -259,133 +247,39 @@ class SocketIOTransporter(logging.StreamHandler):
             self.handleError(record)
 
 
-class CustomFormatter(logging.Formatter):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.colors = {
-            'DEBUG': '\x1b[36m',
-            'INFO': '\x1b[34m',
-            'WARNING': '\x1b[33m',
-            'ERROR': '\x1b[31m',
-            'SUCCESS': '\x1b[32m'
-        }
-        self.reset = '\x1b[0m'
-        self.bold = '\x1b[1m'
-        self.level_formats = {
-            'DEBUG': self.bold + '[ DEBUG ]' + self.reset,
-            'INFO': self.bold + '[ INFO ]' + self.reset,
-            'WARNING': self.bold + '[ WARNING ]' + self.reset,
-            'ERROR': self.bold + '[ ERROR ]' + self.reset,
-            'SUCCESS': self.bold + '[ SUCCESS ]' + self.reset
-        }
-
-    def set_color(self, levelname: str, color_code: str):
-        """
-        Set a custom color for a specific log level.
-        :param levelname: The name of the log level (e.g., 'DEBUG', 'INFO').
-        :param color_code: The ANSI color code to use for the specified log level.
-        """
-        self.colors[levelname] = color_code
-        self.level_formats[levelname] = f"{self.bold}[ {levelname} ]{self.reset}"
-
-    def format(self, record) -> str:
-        username = get_login()
-
-        levelname = record.levelname
-        color = self.colors.get(levelname, '')
-        level_fmt = self.level_formats.get(levelname, f'{levelname}')
-        level_fmt = f"{color}{level_fmt}{self.reset}"
-        record.asctime = self.formatTime(record, self.datefmt)
-        module_file = record.pathname
-        parent_dir = (os.path.basename(os.path.dirname(record.pathname)) or module_file) if module_file != '<stdin>' else 'stdin'
-
-        return f"""{self.colors.get('DEBUG')}({username}{self.reset} @ {self.colors.get('WARNING') + parent_dir + self.reset}) 🤌 CL Timing: {color}[ {record.asctime} ]{self.reset}
-{level_fmt} {record.getMessage()}
-🏁"""
-
-
-class DebugLevelFilter(logging.Filter):
-    def __init__(self, debug_level):
-        super().__init__()
-        self.debug_level = debug_level
-        self.level_map = {
-            1: ['ERROR'],
-            2: ['SUCCESS'],
-            3: ['WARNING'],
-            4: ['INFO'],
-            5: ['ERROR','WARNING'],
-            6: ['INFO','SUCCESS'],
-            7: ['ERROR','WARNING','INFO']
-        }
-
-    def filter(self, record):
-        if self.debug_level == 0:
-            return True
-
-        allowed = self.level_map.get(self.debug_level, [])
-        return record.levelname in allowed
-
-
 class LogMachine(logging.Logger):
-    def __init__(self, name="", *args, **kwargs) -> None:
-        super().__init__(name, *args, level=int(kwargs.get('debug_level', 0)))
-        logging.addLevelName(25, "SUCCESS")
-        self.log_file = kwargs.get('log_file', 'logs.log')
-        self.error_file = kwargs.get('error_file', 'errors.log')
-        self.debug_level = int(kwargs.get('debug_level', 0))
-        self.verbose = sys.argv[1:] and '--verbose' in sys.argv[1:]
+    def __init__(self, name="", **kwargs) -> None:
+        super().__init__(name, level=kwargs.get('level', logging.DEBUG))
+        self.log_file = kwargs.get('log_file') or ('logs.log' if self.level == 0 else f"{(logging._levelToName.get(self.level) or 'LOGS').lower()}.log")
         self.central = kwargs.get('central', None)
-        self.queue = queue.Queue(maxsize=10000)
+
+        # File handler
+        fh = logging.FileHandler(self.log_file)
+        fh.setLevel(self.level)
+        self.formatter = CustomFormatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%dT%H:%M:%S%z')
 
         if os.getenv('LM_LOADED') != 'true':
             creds_file_to_dict()
 
-        # Remove existing handlers
-        for h in self.handlers[:]:
-            self.removeHandler(h)
-
-        # File handlers
-        fh = logging.FileHandler(self.log_file)
-        fh.setLevel(self.debug_level)
-        eh = logging.FileHandler(self.error_file)
-        eh.setLevel(logging.ERROR)
-        self.formatter = CustomFormatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%dT%H:%M:%S%z')
-
-        # Console handler
         if self.central:
-            """
-               The central uses usernames to group logs.
-               OS usernames are used to identify the user, meaning names can clash.
-               Therefore, we avoid a user having to define a username, rather, ask the central server to provide it.
-               After getting the username, we store it in the user's home directory in a file named `.LM_CREDS`.
-               This way, the user can change it at any time, and it will be used in all future logs without needing to request it again.
-            """
             self.login(api_key=self.central.get('API_KEY') or self.central.get('api_key'))
             if not self.central.get('room'):
                 self.central['room'] = get_login()
 
-            if 'socketio' not in globals():
-                ch = HTTPTransporter(central=self.central)
-            else:
-                ch = SocketIOTransporter(central=self.central, formatter=self.formatter)
+            ch = SocketIOTransporter(central=self.central)
         else:
             ch = logging.StreamHandler()
 
-        ch.setLevel(logging.DEBUG)
+        ch.setLevel(self.level)
 
         fh.setFormatter(self.formatter)
-        eh.setFormatter(self.formatter)
         ch.setFormatter(self.formatter)
-        self.addHandler(QueueHandler(self.queue))
+        self.addHandler(fh)
+        self.addHandler(ch)
 
-        # Filter console output based on debug_level
-        self.debug_filter = DebugLevelFilter(self.debug_level if not self.verbose else 0)
-        ch.addFilter(self.debug_filter)
-        self.listener = QueueListener(self.queue, fh, eh, ch)
-        self.listener.start()
-        atexit.register(self.listener.stop)
-        sys.stdout.write("LogMachine initialized with debug level {} with{}\n".format(
-                self.debug_level,
+        logging.addLevelName(25, "SUCCESS")
+        print("LogMachine initialized with logging level {} with{}".format(
+                self.level,
                 self.central and
                 f" central logging to {self.central.get('url', '')} in room: {self.central.get('room')}" or
                 "out central logging"
@@ -433,7 +327,6 @@ class LogMachine(logging.Logger):
             self.central.setdefault('headers', {})
             self.central['headers']['Authorization'] = f"Bearer {direct_api_key}"
             self._sync_identity_from_session()
-            return self
 
         elif self.central.get("headers", {}).get("Authorization"):
             self._sync_identity_from_session()
@@ -455,15 +348,15 @@ class LogMachine(logging.Logger):
 
             self._sync_identity_from_session()
 
-        return self
 
     def logout(self) -> None:
         """
         Clear stored credentials and log out from central server.
         """
-        _persist_lm_creds(username='', auth_token='', expiry='')
-        self.central["headers"] = {k: v for k, v in self.central.get("headers", {}).items() if k.lower() != "authorization"}
-        sys.stdout.write("Logged out and cleared credentials.\n")
+        if self.central:
+            _persist_lm_creds(username='', auth_token='', expiry='')
+            self.central["headers"] = {k: v for k, v in self.central.get("headers", {}).items() if k.lower() != "authorization"}
+            sys.stdout.write("Logged out and cleared credentials.\n")
 
     def success(self, msg, *args, **kwargs) -> None:
         """
@@ -478,20 +371,22 @@ class LogMachine(logging.Logger):
         if self.isEnabledFor(25):
             self._log(25, msg, args, stacklevel=2, **kwargs)
 
-    def new_level(self, level_name: str, level_num: int, ansi_color="\x1b[37m", filter_num=None) -> None:
+    def new_level(self, level_name: str, level_num: int, ansi_color="\x1b[37m") -> None:
         """
         Dynamically add a new logging level.
+
         :param level_name: Name of the new logging level.
         :param level_num: Numeric value of the new logging level.
-        :param method_name: Optional method name for the new level.
+        :param ansi_color: The color in which the level's logs will appear
         """
-        if not hasattr(self, level_name):
+        if level_num and logging._levelToName.get(level_num):
+            raise Exception("The level you're trying to declare already exists")
+
+        if not hasattr(self, level_name) and self.isEnabledFor(level_num):
             logging.addLevelName(level_num, level_name)
             setattr(self, level_name.lower(), lambda msg, *args, **kwargs: self._log(level_num, msg, args, stacklevel=2, **kwargs))
             self.setLevel(min(self.level, level_num))  # Ensure the logger's level is set appropriately
             self.formatter.set_color(level_name, ansi_color) # Add color formatting for the new level
-            if filter_num is not None:
-                self.debug_filter.level_map[filter_num] = self.debug_filter.level_map.get(filter_num, []) + [level_name]
 
     def parse_log(self, log_text) -> dict | None:
         log_text = log_text.strip()
