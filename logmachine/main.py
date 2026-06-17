@@ -136,6 +136,9 @@ def get_login():
 
 class CustomFormatter(logging.Formatter):
     def __init__(self, *args, **kwargs):
+        args = args if args[0] else ("""({username} @ \x1b[33m{module}{reset}) 🤌 CL Timing: {color}[ {timestamp} ]{reset}\n{level} {message}\n🏁""",)
+        kwargs.setdefault('style', '{')
+
         super().__init__(*args, **kwargs)
         self.colors = {
             'DEBUG': '\x1b[36m',
@@ -172,15 +175,23 @@ class CustomFormatter(logging.Formatter):
 
         levelname = record.levelname
         color = self.colors.get(levelname) or self.colors['*']
+        module = record.__dict__.get('module')
         level_fmt = self.level_formats.get(levelname) or self.level_formats['*']
         level_fmt = f"{color}{level_fmt}{self.reset}"
         record.asctime = self.formatTime(record, self.datefmt)
-        module_file = record.pathname
-        parent_dir = (os.path.basename(os.path.dirname(record.pathname)) or module_file) if module_file != '<stdin>' else 'stdin'
 
-        return f"""{self.colors['DEBUG']}({username}{self.reset} @ {self.colors['WARNING']}{parent_dir}{self.reset}) 🤌 CL Timing: {color}[ {record.asctime} ]{self.reset}
-{level_fmt} {record.getMessage()}
-🏁"""
+        return self._fmt.format(
+            **{
+                **record.__dict__,
+                "reset": self.reset,
+                "color": color,
+                "username": f"{self.colors['DEBUG']}{username}{self.reset}",
+                "level": level_fmt,  # If you use levelname in your format string, your log will appear uncolored because levelname is used by the logging module internally. Use {level} in your format string to get colored levels.
+                "message": record.getMessage(),
+                "timestamp": record.asctime,
+                "module": f"{self.colors['WARNING']}{module}{self.reset}"
+            }
+        )
 
 
 class SocketIOTransporter(logging.StreamHandler):
@@ -256,7 +267,10 @@ class LogMachine(logging.Logger):
         # File handler
         fh = logging.FileHandler(self.log_file)
         fh.setLevel(self.level)
-        self.formatter = CustomFormatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%dT%H:%M:%S%z')
+        self.formatter = CustomFormatter(
+            kwargs.get("log_format"),
+            datefmt=kwargs.get('datefmt', '%Y-%m-%dT%H:%M:%S')
+        )
 
         if os.getenv('LM_LOADED') != 'true':
             creds_file_to_dict()
@@ -278,14 +292,6 @@ class LogMachine(logging.Logger):
         self.addHandler(ch)
 
         logging.addLevelName(25, "SUCCESS")
-        print("LogMachine initialized with logging level {} with{}".format(
-                self.level,
-                self.central and
-                f" central logging to {self.central.get('url', '')} in room: {self.central.get('room')}" or
-                "out central logging"
-            )
-        )
-
     def _sync_identity_from_session(self):
         if not self.central:
             return

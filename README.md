@@ -2,20 +2,24 @@
 
 > Collaborative, beautiful logging system for distributed developers
 
-**logmachine** helps teams log smarter. It’s a fully pluggable logging system that supports colored output, JSON parsing, structured log forwarding via **Socket.IO**, and log centralization — all from a standard Python logging interface.
+It is an improvement over the standard Python logging module, with a focus on team-based logging, centralization and better log formatting.
+It is designed to be easy to use, with a simple interface that allows developers to log messages in a structured and consistent way.
+
+**logmachine** helps teams log smarter. All from a standard Python logging interface.
 
 ---
 
-## 🚀 Features
+## Features
 
-- 🔥 **Color-coded terminal logs** (DEBUG, INFO, WARNING, ERROR, SUCCESS, etc)
-- 📤 **Log forwarding** to a central server
-- 🪵 **Custom log levels** (add your own with `.new_level(...)`)
-- 👥 **User identity tracking** for team-based logs
-- 🧩 **Pluggable backends**: send logs to a central server or local files
-- 📦 **Simple JSON output** for web dashboards or collectors
-- 🧽 Strips ANSI escape codes from logs for clean parsing
-- 🧠 Automatically resolves usernames and session tokens in `~/.logmachine`
+- **Color-coded terminal logs** (DEBUG, INFO, WARNING, ERROR, SUCCESS, etc)
+- **Log forwarding** to a central server
+- **Custom log levels** (add your own with `.new_level(...)`)
+- **Custom log formatting** via `log_format` and `datefmt`
+- **User identity tracking** for team-based logs
+- **Pluggable backends**: send logs to a central server or local files
+- **Simple JSON output** for web dashboards or collectors
+- Strips ANSI escape codes from logs for clean parsing
+- Automatically resolves usernames and session tokens in `~/.logmachine`
 
 ---
 
@@ -27,7 +31,7 @@ pip install logmachine
 
 ---
 
-## 🧰 Usage
+## Usage
 
 ### Basic Setup
 
@@ -44,6 +48,30 @@ logger.success("Operation completed successfully!")
 logger.debug("Debugging information here.")
 logger.warning("This is a warning message.")
 ```
+
+### Custom Log Formatting
+
+```python
+from logmachine import LogMachine
+
+logger = LogMachine(
+    "myapp",
+    level=1,
+    log_format="({username} @ {module}) [ {timestamp} ] {level} {message}",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+logger.info("Hello with a custom format!")
+```
+
+The `log_format` string supports:
+* `{username}`
+* `{timestamp}`
+* `{level}`
+* `{message}`
+* `{color}`
+* `{reset}`
+* Plus all other values in a `LogRecord` like `pathname`, `filename`, `lineno`, `module`, `funcName`, etc. (See [Python Logging LogRecord](https://docs.python.org/3/library/logging.html#logrecord-attributes))
 
 ### With Central Logging
 
@@ -104,7 +132,7 @@ logger = LogMachine("with_central", central={
     "url": "https://logmachine.org",
     "room": "team_alpha",
     "api_key": "your_api_key_here"
-}).login()
+})
 
 logger.info("Authenticated without browser interaction")
 ```
@@ -113,15 +141,15 @@ We recommend setting the `LM_API_KEY` environment variable instead of passing `a
 
 ---
 
-## 🎨 Log Format
+## Log Format
 
 Every log includes:
 
-* ✅ Username (resolved automatically or via server)
-* 📁 Module directory
-* ⏱️ Timestamp
-* 📦 Level (INFO, ERROR, etc.)
-* 📝 Message
+* Username (resolved automatically or via server)
+* Module directory
+* Timestamp
+* Level (INFO, ERROR, etc.)
+* Message
 
 Sample (terminal):
 
@@ -188,6 +216,8 @@ To use Socket.IO transport, your central server must support this event:
 | `url`           | `str`  | Central server base URL                            |
 | `room`          | `str`  | Logical group or org name                          |
 | `endpoint`      | `str`  | Socket.IO endpoint path for central transport (default: `/api/socket.io/`) |
+| `log_format`    | `str`  | Custom message template for log output             |
+| `datefmt`       | `str`  | Timestamp format for log messages (default: `%Y-%m-%dT%H:%M:%S`) |
 | `api_key`       | `str`  | API key for non-interactive auth (optional)        |
 | `headers`       | `dict` | Extra headers to send (e.g. auth token)            |
 

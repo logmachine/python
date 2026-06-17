@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-06-18
+
+- **Python**: Added `log_format` support for fully custom log templates.
+- **Python**: Added `datefmt` support to customize timestamp formatting.
+- **Python**: Improved `CustomFormatter` templating with `{username}`, `{module}`, `{timestamp}`, `{level}`, `{message}`, `{color}`, `{reset}`, plus all other LogRecord attributes.
+- **Python**: Simplified internal formatting behavior and improved color handling for custom levels.
+- **Python**: Remove initialization success message.
+
 ## [2.5.0] - 2026-06-15
 
 - **Python**: Switched central transport to Socket.IO-only and removed the legacy `HTTPTransporter`.
