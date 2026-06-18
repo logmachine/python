@@ -1,4 +1,7 @@
-# 🧠 LogMachine
+# LogMachine Python Logger
+
+[![PyPI version](https://badge.fury.io/py/logmachine.svg)](https://badge.fury.io/py/logmachine)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > Collaborative, beautiful logging system for distributed developers
 
@@ -23,7 +26,7 @@ It is designed to be easy to use, with a simple interface that allows developers
 
 ---
 
-## ⚙️ Installation
+## Installation
 
 ```bash
 pip install logmachine
@@ -163,7 +166,7 @@ Sample (terminal):
 
 ---
 
-## 🛠️ Advanced
+## Advanced
 
 ### Add Your Own Log Level
 
@@ -175,7 +178,7 @@ logger.critical_hack("Zero day found!")
 
 ---
 
-## 📤 Parse & Export
+## Parse & Export
 
 ### Convert Logs to JSON
 
@@ -202,14 +205,14 @@ To use Socket.IO transport, your central server must support this event:
 
 ---
 
-## 🔐 Security
+## Security
 
 * HTTP headers (e.g. `Authorization`) can be injected
 * Central log transmission is fully customizable
 
 ---
 
-## 🔧 Configuration Summary
+## Configuration Summary
 
 | Param           | Type   | Description                                        |
 | --------------- | ------ | -------------------------------------------------- |
@@ -223,16 +226,16 @@ To use Socket.IO transport, your central server must support this event:
 
 ---
 
-## 📄 License
+## License
 
 MIT License
 
 ---
 
-## 🙋‍♂️ Author
+## Author
 
-Buffer Punk
-[logmachine.org](https://logmachine.org)
+[Buffer Punk](https://bufferpunk.com)
+[Log Machine](https://logmachine.org)
 [GitHub](https://github.com/logmachine/python)
 
 ---

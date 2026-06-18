@@ -188,7 +188,7 @@ class CustomFormatter(logging.Formatter):
                 "username": f"{self.colors['DEBUG']}{username}{self.reset}",
                 "level": level_fmt,  # If you use levelname in your format string, your log will appear uncolored because levelname is used by the logging module internally. Use {level} in your format string to get colored levels.
                 "message": record.getMessage(),
-                "timestamp": record.asctime,
+                "timestamp": f"{color}{record.asctime}{self.reset}",
                 "module": f"{self.colors['WARNING']}{module}{self.reset}"
             }
         )
@@ -268,7 +268,7 @@ class LogMachine(logging.Logger):
         fh = logging.FileHandler(self.log_file)
         fh.setLevel(self.level)
         self.formatter = CustomFormatter(
-            kwargs.get("log_format"),
+            kwargs.get("log_format") or kwargs.get("format"),
             datefmt=kwargs.get('datefmt', '%Y-%m-%dT%H:%M:%S')
         )
 
