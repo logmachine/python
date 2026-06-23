@@ -1,7 +1,6 @@
 # LogMachine Python Logger
 
-[![PyPI version](https://badge.fury.io/py/logmachine.svg)](https://badge.fury.io/py/logmachine)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI version](https://badge.fury.io/py/logmachine.svg)](https://badge.fury.io/py/logmachine)[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > Collaborative, beautiful logging system for distributed developers
 
@@ -60,7 +59,7 @@ from logmachine import LogMachine
 logger = LogMachine(
     "myapp",
     level=1,
-    log_format="({username} @ {module}) [ {timestamp} ] {level} {message}",
+    format="({username} @ {module}) [ {timestamp} ] {level} {message}",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 

@@ -252,7 +252,7 @@ class SocketIOTransporter(logging.StreamHandler):
                     'level': record.levelname,
                     'timestamp': self.formatter.formatTime(record, self.formatter.datefmt),
                     'message': record.getMessage()
-                }, 'auth_token': os.getenv('lm_auth_token')})
+                }})
 
         except Exception:
             self.handleError(record)
@@ -444,7 +444,7 @@ class LogMachine(logging.Logger):
 
 
 def default_logger():
-    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://logmachine.org' })
+    return LogMachine('default_logger', debug_level=0, verbose=False, central={ 'url': 'https://api.logmachine.org' })
 
 
 logging.setLoggerClass(LogMachine)
