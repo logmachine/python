@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/logmachine.svg)](https://badge.fury.io/py/logmachine)[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Collaborative, beautiful logging system for distributed developers
+> Collective, beautiful logging system for distributed developers
 
 It is an improvement over the standard Python logging module, with a focus on team-based logging, centralization and better log formatting.
 It is designed to be easy to use, with a simple interface that allows developers to log messages in a structured and consistent way.
